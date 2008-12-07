@@ -3,8 +3,10 @@ require 'zlib'
 
 require 'rubygems/command'
 require 'open-uri'
+require 'thread'
 
 class Gem::Commands::MirrorCommand < Gem::Command
+  MAX_WORKERS = 15
 
   def initialize
     super 'mirror', 'Mirror a gem repository'
@@ -79,32 +81,11 @@ Multiple sources and destinations may be specified.
       end
 
       sourceindex = Marshal.load(sourceindex_data)
-
+      sourceindex_data.replace("")  # Free up memory.
+      
       progress = ui.progress_reporter sourceindex.size,
                                       "Fetching #{sourceindex.size} gems"
-      sourceindex.each do |fullname, gem|
-        gem_file = "#{fullname}.gem"
-        gem_dest = File.join gems_dir, gem_file
-
-        unless File.exist? gem_dest then
-          begin
-            open "#{get_from}/gems/#{gem_file}", "rb" do |g|
-              contents = g.read
-              open gem_dest, "wb" do |out|
-                out.write contents
-              end
-            end
-          rescue
-            old_gf = gem_file
-            gem_file = gem_file.downcase
-            retry if old_gf != gem_file
-            alert_error $!
-          end
-        end
-
-        progress.updated gem_file
-      end
-
+      download_gem_files(get_from, sourceindex, progress, gems_dir)
       progress.done
     end
   end
@@ -112,6 +93,56 @@ Multiple sources and destinations may be specified.
   private
     def config_file
       options[:mirror_file] || File.join(Gem.user_home, '.gemmirrorrc')
+    end
+    
+    def download_gem_files(get_from, source_index, progress, gems_dir)
+      queue = SizedQueue.new(MAX_WORKERS)
+      mutex = Mutex.new
+      
+      threads = []
+      MAX_WORKERS.times do
+        thread = Thread.new do
+          while (item = queue.pop)
+            fullname, gem = item
+            gem_file = "#{fullname}.gem"
+            gem_dest = File.join(gems_dir, gem_file)
+
+            unless File.exist?(gem_dest) then
+              begin
+                open("#{get_from}/gems/#{gem_file}", "rb") do |g|
+                  contents = g.read
+                  open(gem_dest, "wb") do |out|
+                    out.write(contents)
+                  end
+                end
+              rescue
+                old_gf = gem_file
+                gem_file = gem_file.downcase
+                retry if old_gf != gem_file
+                mutex.synchronize do
+                  alert_error $!
+                end
+              end
+            end
+
+            mutex.synchronize do
+              progress.updated(gem_file)
+            end
+          end
+        end
+        
+        threads << thread
+      end
+      
+      source_index.each do |fullname, gem|
+        queue.push([fullname, gem])
+      end
+      threads.size.times do
+        queue.push(nil)
+      end
+      threads.each do |thread|
+        thread.join
+      end
     end
 end
 
