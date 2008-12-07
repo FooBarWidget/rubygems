@@ -8,13 +8,17 @@ class Gem::Commands::MirrorCommand < Gem::Command
 
   def initialize
     super 'mirror', 'Mirror a gem repository'
+    add_option '-m', '--mirror-file=FILENAME',
+               'File to use in place of ~/.gemmirrorrc' do |filename, options|
+      options[:mirror_file] = File.expand_path(filename)
+    end
   end
 
   def description # :nodoc:
     <<-EOF
-The mirror command uses the ~/.gemmirrorrc config file to mirror remote gem
-repositories to a local path. The config file is a YAML document that looks
-like this:
+The mirror command uses the ~/.gemmirrorrc config file (or a different
+file, if specified) to mirror remote gem repositories to a local path.
+The config file is a YAML document that looks like this:
 
   ---
   - from: http://gems.example.com # source repository URI
@@ -25,8 +29,6 @@ Multiple sources and destinations may be specified.
   end
 
   def execute
-    config_file = File.join Gem.user_home, '.gemmirrorrc'
-
     raise "Config file #{config_file} not found" unless File.exist? config_file
 
     mirrors = YAML.load_file config_file
@@ -107,5 +109,9 @@ Multiple sources and destinations may be specified.
     end
   end
 
+  private
+    def config_file
+      options[:mirror_file] || File.join(Gem.user_home, '.gemmirrorrc')
+    end
 end
 

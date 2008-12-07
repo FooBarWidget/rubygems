@@ -27,11 +27,9 @@ class TestGemCommandsMirrorCommand < RubyGemTestCase
       Gem::Indexer.new(@tempdir).generate_index
     end
 
-    orig_HOME = ENV['HOME']
-    ENV['HOME'] = @tempdir
-    Gem.instance_variable_set :@user_home, nil
+    @cmd.options[:mirror_file] = File.join(@tempdir, 'gemmirrorrc')
 
-    File.open File.join(Gem.user_home, '.gemmirrorrc'), 'w' do |fp|
+    File.open File.join(@tempdir, 'gemmirrorrc'), 'w' do |fp|
       fp.puts "---"
       # tempdir could be a drive+path (under windows)
       if @tempdir.match(/[a-z]:/i)
@@ -51,9 +49,10 @@ class TestGemCommandsMirrorCommand < RubyGemTestCase
     assert File.exist?(File.join(mirror, 'gems', "#{@b2.full_name}.gem"))
     assert File.exist?(File.join(mirror, 'gems', "#{@c1_2.full_name}.gem"))
     assert File.exist?(File.join(mirror, "Marshal.#{@marshal_version}"))
-  ensure
-    orig_HOME.nil? ? ENV.delete('HOME') : ENV['HOME'] = orig_HOME
-    Gem.instance_variable_set :@user_home, nil
+  end
+  
+  def test_it_uses_gemmirrorrc_in_home_folder_by_default
+    assert_equal File.join(Gem.user_home, ".gemmirrorrc"), @cmd.send(:config_file)
   end
 
 end if ''.respond_to? :to_xs
