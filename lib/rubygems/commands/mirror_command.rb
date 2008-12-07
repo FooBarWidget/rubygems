@@ -102,31 +102,42 @@ Multiple sources and destinations may be specified.
       threads = []
       MAX_WORKERS.times do
         thread = Thread.new do
-          while (item = queue.pop)
-            fullname, gem = item
-            gem_file = "#{fullname}.gem"
-            gem_dest = File.join(gems_dir, gem_file)
+          begin
+            while (item = queue.pop)
+              fullname, gem = item
+              gem_file = "#{fullname}.gem"
+              gem_dest = File.join(gems_dir, gem_file)
 
-            unless File.exist?(gem_dest) then
-              begin
-                open("#{get_from}/gems/#{gem_file}", "rb") do |g|
-                  contents = g.read
-                  open(gem_dest, "wb") do |out|
-                    out.write(contents)
+              if !File.exist?(gem_dest)
+                begin
+                  open("#{get_from}/gems/#{gem_file}", "rb") do |g|
+                    contents = g.read
+                    open("#{gem_dest}.tmp", "wb") do |out|
+                      writing_mirror_gem_file(gem_file)
+                      out.write(contents)
+                    end
+                  end
+                  File.unlink(gem_dest) rescue nil
+                  File.rename("#{gem_dest}.tmp", gem_dest)
+                rescue
+                  old_gf = gem_file
+                  gem_file = gem_file.downcase
+                  retry if old_gf != gem_file
+                  
+                  File.unlink("#{gem_dest}.tmp") rescue nil
+                  mutex.synchronize do
+                    alert_error $!
                   end
                 end
-              rescue
-                old_gf = gem_file
-                gem_file = gem_file.downcase
-                retry if old_gf != gem_file
-                mutex.synchronize do
-                  alert_error $!
-                end
+              end
+
+              mutex.synchronize do
+                progress.updated(gem_file)
               end
             end
-
+          rescue => e
             mutex.synchronize do
-              progress.updated(gem_file)
+              alert_error(e.to_s + "\n    " + e.backtrace.join("\n    "))
             end
           end
         end
@@ -143,6 +154,11 @@ Multiple sources and destinations may be specified.
       threads.each do |thread|
         thread.join
       end
+    end
+    
+    def writing_mirror_gem_file(gem_file)
+      # This method doesn't do anything; it serves as a hook for
+      # the unit tests to test error handling.
     end
 end
 
