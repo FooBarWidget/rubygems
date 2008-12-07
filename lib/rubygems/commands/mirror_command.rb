@@ -124,6 +124,9 @@ Multiple sources and destinations may be specified.
                   end
                   File.unlink(gem_dest) rescue nil
                   File.rename("#{gem_dest}.tmp", gem_dest)
+                  mutex.synchronize do
+                    gem_file_mirrored(gem_dest, gem)
+                  end
                 rescue
                   old_gf = gem_file
                   gem_file = gem_file.downcase
@@ -164,6 +167,16 @@ Multiple sources and destinations may be specified.
     def writing_mirror_gem_file(gem_file)
       # This method doesn't do anything; it serves as a hook for
       # the unit tests to test error handling.
+    end
+    
+    # This is a hook method is which called when a single gem file has
+    # been downloaded. The default implementation doesn't do anything,
+    # it serves as a hook that subclasses that implement in order to
+    # add additional behavior.
+    #
+    # +filename+ is the filename where the downloaded file has been written
+    # to, while +spec+ is the corresponding Specification object.
+    def gem_file_mirrored(filename, spec)
     end
 end
 
