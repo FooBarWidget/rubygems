@@ -80,7 +80,9 @@ Multiple sources and destinations may be specified.
       end
 
       open File.join(get_from.to_s, "Marshal.#{Gem.marshal_version}.Z"), "rb" do |y|
-        sourceindex_data = Zlib::Inflate.inflate y.read
+        data = y.read
+        sourceindex_data = Zlib::Inflate.inflate(data)
+        data.replace("")    # Free up memory.
         open File.join(save_to, "Marshal.#{Gem.marshal_version}"), "wb" do |out|
           out.write sourceindex_data
         end
