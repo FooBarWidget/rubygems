@@ -131,13 +131,19 @@ Multiple sources and destinations may be specified.
         
         if File.exist?(gem_dest)
           mutex.synchronize do
-            progress.updated(gem_file)
+            progress.updated("    Skipped => #{gem_file}")
           end
         elsif first
           # The open-uri library is not thread-safe because it dynamically
           # calls 'require'. So here we make sure that the first call to the
-          # open-uri library happens within the main thread.
+          # open-uri library happens within the main thread, and we make sure
+          # that we preload (some of the?) libraries that it may require.
           first = false
+          require 'net/http'
+          require 'net/https'
+          require 'net/ftp'
+          require 'socket'
+          require 'tempfile'
           download_gem_file(get_from, gem_file, gem_dest, gem_spec, mutex, progress)
         else
           queue.push([gem_file, gem_dest, gem_spec])
@@ -152,6 +158,9 @@ Multiple sources and destinations may be specified.
     end
     
     def download_gem_file(get_from, gem_file, gem_dest, spec, mutex, progress)
+      mutex.synchronize do
+        progress.updated("Downloading => #{gem_file}")
+      end
       begin
         open("#{get_from}/gems/#{gem_file}", "rb") do |g|
           contents = g.read
@@ -174,10 +183,6 @@ Multiple sources and destinations may be specified.
         mutex.synchronize do
           alert_error e
         end
-      end
-
-      mutex.synchronize do
-        progress.updated(gem_file)
       end
     end
     
