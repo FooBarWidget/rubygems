@@ -6,6 +6,8 @@ require 'open-uri'
 require 'thread'
 
 class Gem::Commands::MirrorCommand < Gem::Command
+  DEFAULT_WORKER_THREADS = 10
+  
   def initialize
     super 'mirror', 'Mirror a gem repository'
     
@@ -14,9 +16,8 @@ class Gem::Commands::MirrorCommand < Gem::Command
       options[:mirror_file] = File.expand_path(filename)
     end
     
-    options[:worker_threads] = 10
     add_option '-w', '--worker-threads=N',
-               "Number of threads to use for downloading. Default: #{options[:worker_threads]}" do |n, options|
+               "Number of threads to use for downloading. Default: #{DEFAULT_WORKER_THREADS}" do |n, options|
       options[:worker_threads] = n.to_i if n.to_i > 0
     end
   end
@@ -101,11 +102,12 @@ Multiple sources and destinations may be specified.
     end
     
     def download_gem_files(get_from, source_index, progress, gems_dir)
-      queue = SizedQueue.new(options[:worker_threads])
+      nworkers = options[:worker_threads] || DEFAULT_WORKER_THREADS
+      queue = SizedQueue.new(nworkers)
       mutex = Mutex.new
       
       threads = []
-      options[:worker_threads].times do
+      nworkers.times do
         thread = Thread.new do
           begin
             while (item = queue.pop)
