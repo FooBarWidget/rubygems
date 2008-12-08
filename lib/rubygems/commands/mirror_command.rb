@@ -111,39 +111,8 @@ Multiple sources and destinations may be specified.
         thread = Thread.new do
           begin
             while (item = queue.pop)
-              fullname, gem = item
-              gem_file = "#{fullname}.gem"
-              gem_dest = File.join(gems_dir, gem_file)
-
-              if !File.exist?(gem_dest)
-                begin
-                  open("#{get_from}/gems/#{gem_file}", "rb") do |g|
-                    contents = g.read
-                    open("#{gem_dest}.tmp", "wb") do |out|
-                      writing_mirror_gem_file(gem_file)
-                      out.write(contents)
-                    end
-                  end
-                  File.unlink(gem_dest) rescue nil
-                  File.rename("#{gem_dest}.tmp", gem_dest)
-                  mutex.synchronize do
-                    gem_file_mirrored(gem_dest, gem)
-                  end
-                rescue
-                  old_gf = gem_file
-                  gem_file = gem_file.downcase
-                  retry if old_gf != gem_file
-                  
-                  File.unlink("#{gem_dest}.tmp") rescue nil
-                  mutex.synchronize do
-                    alert_error $!
-                  end
-                end
-              end
-
-              mutex.synchronize do
-                progress.updated(gem_file)
-              end
+              gem_file, gem_dest, spec = item
+              download_gem_file(get_from, gem_file, gem_dest, spec, mutex, progress)
             end
           rescue => e
             mutex.synchronize do
@@ -155,14 +124,60 @@ Multiple sources and destinations may be specified.
         threads << thread
       end
       
-      source_index.each do |fullname, gem|
-        queue.push([fullname, gem])
+      first = true
+      source_index.each do |fullname, gem_spec|
+        gem_file = "#{fullname}.gem"
+        gem_dest = File.join(gems_dir, gem_file)
+        
+        if File.exist?(gem_dest)
+          mutex.synchronize do
+            progress.updated(gem_file)
+          end
+        elsif first
+          # The open-uri library is not thread-safe because it dynamically
+          # calls 'require'. So here we make sure that the first call to the
+          # open-uri library happens within the main thread.
+          first = false
+          download_gem_file(get_from, gem_file, gem_dest, gem_spec, mutex, progress)
+        else
+          queue.push([gem_file, gem_dest, gem_spec])
+        end
       end
       threads.size.times do
         queue.push(nil)
       end
       threads.each do |thread|
         thread.join
+      end
+    end
+    
+    def download_gem_file(get_from, gem_file, gem_dest, spec, mutex, progress)
+      begin
+        open("#{get_from}/gems/#{gem_file}", "rb") do |g|
+          contents = g.read
+          open("#{gem_dest}.tmp", "wb") do |out|
+            writing_mirror_gem_file(gem_file)
+            out.write(contents)
+          end
+        end
+        File.unlink(gem_dest) rescue nil
+        File.rename("#{gem_dest}.tmp", gem_dest)
+        mutex.synchronize do
+          gem_file_mirrored(gem_dest, spec)
+        end
+      rescue => e
+        old_gf = gem_file
+        gem_file = gem_file.downcase
+        retry if old_gf != gem_file
+        
+        File.unlink("#{gem_dest}.tmp") rescue nil
+        mutex.synchronize do
+          alert_error e
+        end
+      end
+
+      mutex.synchronize do
+        progress.updated(gem_file)
       end
     end
     
