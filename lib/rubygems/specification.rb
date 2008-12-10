@@ -316,7 +316,7 @@ module Gem
 
       current_version = CURRENT_SPECIFICATION_VERSION
 
-      field_count = if spec.specification_version > current_version then
+      field_count = if spec.specification_version.to_i > current_version then
                       spec.instance_variable_set :@specification_version,
                                                  current_version
                       MARSHAL_FIELDS[current_version]
@@ -324,7 +324,7 @@ module Gem
                       MARSHAL_FIELDS[spec.specification_version]
                     end
 
-      if array.size < field_count then
+      if array.size < field_count.to_i then
         raise TypeError, "invalid Gem::Specification format #{array.inspect}"
       end
 
