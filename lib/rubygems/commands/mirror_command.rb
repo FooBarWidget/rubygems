@@ -3,6 +3,9 @@ require 'zlib'
 
 require 'rubygems/command'
 require 'open-uri'
+require 'tempfile'
+require 'fileutils'
+require 'timeout'
 require 'thread'
 
 class Gem::Commands::MirrorCommand < Gem::Command
@@ -93,7 +96,12 @@ Multiple sources and destinations may be specified.
       
       progress = ui.progress_reporter sourceindex.size,
                                       "Fetching #{sourceindex.size} gems"
-      download_gem_files(get_from, sourceindex, progress, gems_dir)
+      begin
+        download_gem_files(get_from, sourceindex, progress, gems_dir)
+      rescue => e
+        alert_error("*** #{e.class}: #{e}\n    " + e.backtrace.join("\n    "))
+        raise
+      end
       progress.done
     end
   end
@@ -104,6 +112,50 @@ Multiple sources and destinations may be specified.
     end
     
     def download_gem_files(get_from, source_index, progress, gems_dir)
+      tmpdir = File.join(gems_dir, "gem_mirror.#{Process.pid}")
+      input_list = Tempfile.new("gem_mirror")
+      FileUtils.mkdir_p(tmpdir)
+      begin
+        files_to_download = 0
+        source_index.each do |fullname, gem_spec|
+          gem_file = "#{fullname}.gem"
+          gem_dest = File.join(gems_dir, gem_file)
+          if !File.exist?(gem_dest)
+            input_list.puts("-O")
+            if get_from.to_s =~ /\A(https?|ftp):/
+              protocol = nil
+            else
+              protocol = "file://"
+            end
+            input_list.puts("url = \"#{protocol}#{get_from}/gems/#{fullname}.gem\"")
+            files_to_download += 1
+          end
+        end
+        input_list.flush
+        
+        say "#{files_to_download} new gems"
+        if files_to_download > 0
+          old_dir = Dir.getwd
+          begin
+            Dir.chdir(tmpdir)
+            if !system("curl", "--config", input_list.path)
+              alert_error "One or more downloads failed"
+            end
+            Dir["*.gem"].each do |filename|
+              File.rename(filename, "../#{filename}")
+              say "Downloaded #{filename}"
+            end
+          ensure
+            Dir.chdir(old_dir)
+          end
+        end
+      ensure
+        FileUtils.rm_rf(tmpdir)
+        input_list.close!
+      end
+    end
+    
+    def download_gem_files2(get_from, source_index, progress, gems_dir)
       nworkers = options[:worker_threads] || DEFAULT_WORKER_THREADS
       queue = SizedQueue.new(nworkers)
       mutex = Mutex.new
@@ -114,7 +166,13 @@ Multiple sources and destinations may be specified.
           begin
             while (item = queue.pop)
               gem_file, gem_dest, spec = item
-              download_gem_file(get_from, gem_file, gem_dest, spec, mutex, progress)
+              begin
+              	download_gem_file(get_from, gem_file, gem_dest, spec, mutex, progress)
+              rescue Timeout::Error => e
+                mutex.synchronize do
+              	  alert_error "#{gem_file} download failed: timeout"
+              	end
+              end
             end
           rescue => e
             mutex.synchronize do
@@ -164,11 +222,13 @@ Multiple sources and destinations may be specified.
         progress.updated("Downloading => #{gem_file}")
       end
       begin
-        open("#{get_from}/gems/#{gem_file}", "rb") do |g|
-          contents = g.read
+        timed_open("#{get_from}/gems/#{gem_file}", "rb") do |g|
           open("#{gem_dest}.tmp", "wb") do |out|
-            writing_mirror_gem_file(gem_file)
-            out.write(contents)
+            while (contents = timed_read(g, 1024 * 16))
+              writing_mirror_gem_file(gem_file)
+              
+              out.write(contents)
+            end
           end
         end
         File.unlink(gem_dest) rescue nil
@@ -183,8 +243,25 @@ Multiple sources and destinations may be specified.
         
         File.unlink("#{gem_dest}.tmp") rescue nil
         mutex.synchronize do
-          alert_error e
+          alert_error "*** #{gem_file}: #{e}"
         end
+      end
+    end
+    
+    def timed_open(path, mode, timeout = 30)
+      io = Timeout.timeout(timeout) do
+        open(path, mode)
+      end
+      begin
+        yield io
+      ensure
+        io.close
+      end
+    end
+    
+    def timed_read(io, size, timeout = 30)
+      Timeout.timeout(timeout) do
+      	io.read(size)
       end
     end
     
