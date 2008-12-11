@@ -107,6 +107,9 @@ Multiple sources and destinations may be specified.
   end
 
   private
+    BATCH_SIZE = 30
+    SIGINT = Signal.list['INT']
+    
     def config_file
       options[:mirror_file] || File.join(Gem.user_home, '.gemmirrorrc')
     end
@@ -116,35 +119,42 @@ Multiple sources and destinations may be specified.
       input_list = Tempfile.new("gem_mirror")
       FileUtils.mkdir_p(tmpdir)
       begin
-        files_to_download = 0
+        files_to_download = []
         source_index.each do |fullname, gem_spec|
           gem_file = "#{fullname}.gem"
           gem_dest = File.join(gems_dir, gem_file)
           if !File.exist?(gem_dest)
-            input_list.puts("-O")
-            if get_from.to_s =~ /\A(https?|ftp):/
-              protocol = nil
-            else
-              protocol = "file://"
-            end
-            input_list.puts("url = \"#{protocol}#{get_from}/gems/#{fullname}.gem\"")
-            files_to_download += 1
+            files_to_download << "#{get_from}/gems/#{fullname}.gem"
           end
         end
-        input_list.flush
         
-        say "#{files_to_download} new gems"
-        if files_to_download > 0
+        say "#{files_to_download.size} new gems"
+        
+        i = 0
+        while i < files_to_download.size
+          input_list.rewind
+          input_list.truncate(0)
+          
+          j = i
+          while j < files_to_download.size
+            input_list.puts("-O")
+            input_list.puts("url = \"#{files_to_download[j]}\"")
+            j += 1
+          end
+          i = j
+          input_list.flush
+          
           old_dir = Dir.getwd
           begin
             Dir.chdir(tmpdir)
-            if !system("curl", "--config", input_list.path)
+            if !run_curl(input_list.path)
               alert_error "One or more downloads failed"
             end
             Dir["*.gem"].each do |filename|
               File.rename(filename, "../#{filename}")
               say "Downloaded #{filename}"
             end
+            say "#{files_to_download.size - i} gems left"
           ensure
             Dir.chdir(old_dir)
           end
@@ -155,129 +165,14 @@ Multiple sources and destinations may be specified.
       end
     end
     
-    def download_gem_files2(get_from, source_index, progress, gems_dir)
-      nworkers = options[:worker_threads] || DEFAULT_WORKER_THREADS
-      queue = SizedQueue.new(nworkers)
-      mutex = Mutex.new
-      
-      threads = []
-      nworkers.times do
-        thread = Thread.new do
-          begin
-            while (item = queue.pop)
-              gem_file, gem_dest, spec = item
-              begin
-              	download_gem_file(get_from, gem_file, gem_dest, spec, mutex, progress)
-              rescue Timeout::Error => e
-                mutex.synchronize do
-              	  alert_error "#{gem_file} download failed: timeout"
-              	end
-              end
-            end
-          rescue => e
-            mutex.synchronize do
-              alert_error(e.to_s + "\n    " + e.backtrace.join("\n    "))
-            end
-          end
-        end
-        
-        threads << thread
+    def run_curl(input_list_path)
+      result = system("curl", "--progress-bar", "--config", input_list_path)
+      if !result && $?.signaled? && $?.termsig == SIGINT
+        puts "\n"
+        raise Interrupt, "Interrupt"
+      else
+        result
       end
-      
-      first = true
-      source_index.each do |fullname, gem_spec|
-        gem_file = "#{fullname}.gem"
-        gem_dest = File.join(gems_dir, gem_file)
-        
-        if File.exist?(gem_dest)
-          mutex.synchronize do
-            progress.updated("    Skipped => #{gem_file}")
-          end
-        elsif first
-          # The open-uri library is not thread-safe because it dynamically
-          # calls 'require'. So here we make sure that the first call to the
-          # open-uri library happens within the main thread, and we make sure
-          # that we preload (some of the?) libraries that it may require.
-          first = false
-          require 'net/http'
-          require 'net/https'
-          require 'net/ftp'
-          require 'socket'
-          require 'tempfile'
-          download_gem_file(get_from, gem_file, gem_dest, gem_spec, mutex, progress)
-        else
-          queue.push([gem_file, gem_dest, gem_spec])
-        end
-      end
-      threads.size.times do
-        queue.push(nil)
-      end
-      threads.each do |thread|
-        thread.join
-      end
-    end
-    
-    def download_gem_file(get_from, gem_file, gem_dest, spec, mutex, progress)
-      mutex.synchronize do
-        progress.updated("Downloading => #{gem_file}")
-      end
-      begin
-        timed_open("#{get_from}/gems/#{gem_file}", "rb") do |g|
-          open("#{gem_dest}.tmp", "wb") do |out|
-            while (contents = timed_read(g, 1024 * 16))
-              writing_mirror_gem_file(gem_file)
-              
-              out.write(contents)
-            end
-          end
-        end
-        File.unlink(gem_dest) rescue nil
-        File.rename("#{gem_dest}.tmp", gem_dest)
-        mutex.synchronize do
-          gem_file_mirrored(gem_dest, spec)
-        end
-      rescue => e
-        old_gf = gem_file
-        gem_file = gem_file.downcase
-        retry if old_gf != gem_file
-        
-        File.unlink("#{gem_dest}.tmp") rescue nil
-        mutex.synchronize do
-          alert_error "*** #{gem_file}: #{e}"
-        end
-      end
-    end
-    
-    def timed_open(path, mode, timeout = 30)
-      io = Timeout.timeout(timeout) do
-        open(path, mode)
-      end
-      begin
-        yield io
-      ensure
-        io.close
-      end
-    end
-    
-    def timed_read(io, size, timeout = 30)
-      Timeout.timeout(timeout) do
-      	io.read(size)
-      end
-    end
-    
-    def writing_mirror_gem_file(gem_file)
-      # This method doesn't do anything; it serves as a hook for
-      # the unit tests to test error handling.
-    end
-    
-    # This is a hook method is which called when a single gem file has
-    # been downloaded. The default implementation doesn't do anything,
-    # it serves as a hook that subclasses that implement in order to
-    # add additional behavior.
-    #
-    # +filename+ is the filename where the downloaded file has been written
-    # to, while +spec+ is the corresponding Specification object.
-    def gem_file_mirrored(filename, spec)
     end
 end
 
