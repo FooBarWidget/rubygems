@@ -9,19 +9,12 @@ require 'timeout'
 require 'thread'
 
 class Gem::Commands::MirrorCommand < Gem::Command
-  DEFAULT_WORKER_THREADS = 10
-  
   def initialize
     super 'mirror', 'Mirror a gem repository'
     
     add_option '-m', '--mirror-file=FILENAME',
                'File to use in place of ~/.gemmirrorrc' do |filename, options|
       options[:mirror_file] = File.expand_path(filename)
-    end
-    
-    add_option '-w', '--worker-threads=N',
-               "Number of threads to use for downloading. Default: #{DEFAULT_WORKER_THREADS}" do |n, options|
-      options[:worker_threads] = n.to_i if n.to_i > 0
     end
   end
 
@@ -107,7 +100,7 @@ Multiple sources and destinations may be specified.
   end
 
   private
-    BATCH_SIZE = 30
+    BATCH_SIZE = 15
     SIGINT = Signal.list['INT']
     
     def config_file
@@ -136,7 +129,7 @@ Multiple sources and destinations may be specified.
           input_list.truncate(0)
           
           j = i
-          while j < files_to_download.size
+          while j < [files_to_download.size, i + BATCH_SIZE].min
             input_list.puts("-O")
             input_list.puts("url = \"#{files_to_download[j]}\"")
             j += 1
@@ -154,7 +147,12 @@ Multiple sources and destinations may be specified.
               File.rename(filename, "../#{filename}")
               say "Downloaded #{filename}"
             end
-            say "#{files_to_download.size - i} gems left"
+            message = sprintf("Total progress: %2d/%2d [%-45s] %.1f%%",
+                              i,
+                              files_to_download.size,
+                              "#" * (i * 45 / files_to_download.size),
+                              i * 100 / files_to_download.size.to_f)
+            say message
           ensure
             Dir.chdir(old_dir)
           end
