@@ -130,8 +130,7 @@ Multiple sources and destinations may be specified.
           
           j = i
           while j < [files_to_download.size, i + BATCH_SIZE].min
-            input_list.puts("-O")
-            input_list.puts("url = \"#{files_to_download[j]}\"")
+            input_list.puts(files_to_download[j])
             j += 1
           end
           i = j
@@ -140,7 +139,7 @@ Multiple sources and destinations may be specified.
           old_dir = Dir.getwd
           begin
             Dir.chdir(tmpdir)
-            if !run_curl(input_list.path)
+            if !run_wget(input_list.path)
               alert_error "One or more downloads failed"
             end
             Dir["*.gem"].each do |filename|
@@ -163,8 +162,8 @@ Multiple sources and destinations may be specified.
       end
     end
     
-    def run_curl(input_list_path)
-      result = system("curl", "--progress-bar", "--config", input_list_path)
+    def run_wget(input_list_path)
+      result = system("wget", "-i", input_list_path)
       if !result && $?.signaled? && $?.termsig == SIGINT
         puts "\n"
         raise Interrupt, "Interrupt"
