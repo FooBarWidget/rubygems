@@ -1,0 +1,54 @@
+#! /bin/sh /usr/share/dpatch/dpatch-run
+## 01_default_gem_path.dpatch by James Healy <jimmy@deefa.com>
+##
+## All lines beginning with `## DP:' are a description of the patch.
+## DP: Changes the default gem dir from inside the ruby lib to /var/lib/gems/{ruby version}
+
+@DPATCH@
+diff -urNad trunk~/lib/rubygems/defaults.rb trunk/lib/rubygems/defaults.rb
+--- trunk~/lib/rubygems/defaults.rb	2009-05-21 08:30:35.000000000 +0900
++++ trunk/lib/rubygems/defaults.rb	2009-06-14 17:39:17.000000000 +0900
+@@ -15,19 +15,15 @@
+   ##
+   # Default home directory path to be used if an alternate value is not
+   # specified in the environment
++  # 
++  # Debian patch: search order of this directory.
++  #   1. GEM_HOME enviroment variable
++  #      (Using this, Gems are to be installed in any path as you like)
++  #   2. /var/lib/gems/{ruby version} (This is the default path in Debian system)
++  #
+ 
+   def self.default_dir
+-    if defined? RUBY_FRAMEWORK_VERSION then
+-      File.join File.dirname(ConfigMap[:sitedir]), 'Gems',
+-                ConfigMap[:ruby_version]
+-    # 1.9.2dev reverted to 1.8 style path
+-    elsif RUBY_VERSION > '1.9' and RUBY_VERSION < '1.9.2' then
+-      File.join(ConfigMap[:libdir], ConfigMap[:ruby_install_name], 'gems',
+-                ConfigMap[:ruby_version])
+-    else
+-      File.join(ConfigMap[:libdir], ruby_engine, 'gems',
+-                ConfigMap[:ruby_version])
+-    end
++    File.join('/', 'var', 'lib', 'gems', ConfigMap[:ruby_version])
+   end
+ 
+   ##
+@@ -65,13 +61,11 @@
+ 
+   ##
+   # The default directory for binaries
++  # Debian patch: 
++  #   /var/lib/gems/{ruby version}/bin is the default path in Debian system
+ 
+   def self.default_bindir
+-    if defined? RUBY_FRAMEWORK_VERSION then # mac framework support
+-      '/usr/bin'
+-    else # generic install
+-      ConfigMap[:bindir]
+-    end
++    File.join('/', 'var', 'lib', 'gems', ConfigMap[:ruby_version], 'bin')
+   end
+ 
+   ##
